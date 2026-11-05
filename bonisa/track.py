@@ -63,11 +63,27 @@ async def _stream_boxes(content: list[dict], media: str) -> list[Box]:
     result = await parsed.final_result()
     boxes = []
     for r in result.records:
-        if r.kind != "box":
+        if r.kind == "box":
+            l, t, rr, b = r.left, r.top, r.right, r.bottom
+        elif r.kind == "mask":  # SAM may send masks only; use the mask's bounding box
+            l, t, rr, b = r.bounds.left, r.bounds.top, r.bounds.right, r.bounds.bottom
+        else:
             continue
         boxes.append(Box(frame=r.frame.frame_index if r.frame else 0, object_id=r.object_id,
-                         left=r.left, top=r.top, right=r.right, bottom=r.bottom,
-                         confidence=r.confidence))
+                         left=l, top=t, right=rr, bottom=b, confidence=r.confidence))
+    # Debug log: what SAM actually sent back, to diagnose empty results.
+    try:
+        kinds = {}
+        for r in result.records:
+            kinds[r.kind] = kinds.get(r.kind, 0) + 1
+        Path("runs").mkdir(exist_ok=True)
+        with open(Path("runs") / "sam_debug.txt", "a", encoding="utf-8") as f:
+            f.write(f"--- {media}: outcome={result.outcome} records={kinds} boxes={len(boxes)}\n")
+            for d in result.diagnostics[:5]:
+                f.write(f"diag: {d.code} {d.message} | {d.raw[:200]}\n")
+            f.write("raw_output (first 1500 chars):\n" + result.raw_output[:1500] + "\n")
+    except Exception as e:  # never let logging break a run
+        print("debug log failed:", e)
     return boxes
 
 
